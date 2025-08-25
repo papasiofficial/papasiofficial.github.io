@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SQLite di Browser (Static Server Ready)</title>
+  <meta name="description" content="Demo SQLite di browser menggunakan sql.js (WASM). CRUD, SQL console, import/export, persist ke localStorage.">
+  <style>
+    :root { --bg:#0b1020; --card:#111833; --muted:#93a1c8; --text:#e6e9ff; --accent:#6ea8fe; --accent2:#8ed0a9; --danger:#ff6b6b; }
+    *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Ubuntu,Arial,sans-serif;background:linear-gradient(180deg,#0b1020,#0e1430);color:var(--text)}
+    .wrap{max-width:1100px;margin:32px auto;padding:0 16px}
+    .grid{display:grid;gap:16px}
+    .g2{grid-template-columns:1.2fr .8fr}
+    .card{background:var(--card);border:1px solid rgba(255,255,255,.06);border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    .card h2{margin:0 0 8px 0;padding:16px 16px 0 16px;font-size:18px;color:#fff}
+    .card .body{padding:16px}
+    textarea, input, button, select{font:inherit}
+    textarea, input{width:100%;background:#0b1126;border:1px solid rgba(255,255,255,.08);color:#e6e9ff;border-radius:12px;padding:12px;outline:none}
+    textarea:focus, input:focus{border-color:var(--accent)}
+    textarea{min-height:140px;resize:vertical}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    button{border:0;border-radius:12px;padding:10px 14px;background:#1a2347;color:#e6e9ff;cursor:pointer;transition:.15s transform,.2s background}
+    button:hover{transform:translateY(-1px);background:#233065}
+    .btn-accent{background:var(--accent)}
+    .btn-accent:hover{background:#86b7ff}
+    .btn-green{background:var(--accent2)}
+    .btn-green:hover{background:#a4e0bf}
+    .btn-danger{background:var(--danger)}
+    .btn-danger:hover{background:#ff8585}
+    table{width:100%;border-collapse:collapse;overflow:hidden;border-radius:12px}
+    th,td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.07);text-align:left}
+    th{color:#b8c4f0;font-weight:600;background:#0d1530;position:sticky;top:0}
+    tbody tr:hover{background:rgba(255,255,255,.03)}
+    .muted{color:var(--muted);font-size:13px}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#17224a;color:#cdd6ff;border:1px solid rgba(255,255,255,.08);font-size:12px}
+    .footer{margin-top:18px;color:#93a1c8;font-size:13px}
+    @media(max-width:980px){.g2{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1 style="margin:0 0 8px 0;">SQLite di Browser — <span class="pill">Tanpa Backend</span></h1>
+    <div class="muted" style="margin-bottom:18px">
+      Database disimpan di <strong>localStorage</strong> (per-browser/per-origin). Cocok untuk demo, alat internal, atau katalog offline kecil.
+    </div>
+
+    <div class="grid g2">
+      <!-- SQL Console -->
+      <section class="card">
+        <h2>Console SQL</h2>
+        <div class="body">
+          <textarea id="sql-editor" placeholder="Contoh:
+-- Lihat semua tabel
+SELECT name FROM sqlite_master WHERE type='table';
+
+-- Query data
+SELECT * FROM contacts ORDER BY id DESC;
+"></textarea>
+          <div class="row" style="margin-top:10px">
+            <button id="run-sql" class="btn-accent">▶️ Jalankan</button>
+            <button id="format-sql">🧹 Bersihkan</button>
+            <button id="sample-queries">📋 Contoh Query</button>
+          </div>
+          <div id="sql-error" class="footer" style="display:none;color:#ffb4b4"></div>
+          <div id="results" style="margin-top:14px;max-height:360px;overflow:auto"></div>
+        </div>
+      </section>
+
+      <!-- CRUD Contacts -->
+      <section class="card">
+        <h2>Contoh CRUD: <code>contacts</code></h2>
+        <div class="body">
+          <div class="row">
+            <input id="name" placeholder="Nama" />
+            <input id="email" placeholder="Email" />
+          </div>
+          <div class="row" style="margin-top:10px">
+            <button id="add" class="btn-green">➕ Tambah</button>
+            <button id="update" disabled>✏️ Update</button>
+            <button id="cancel-edit">↩️ Batal</button>
+          </div>
+          <div class="footer">Klik <em>Edit</em> atau <em>Hapus</em> di tabel di bawah.</div>
+          <div id="crud-table" style="margin-top:12px;max-height:360px;overflow:auto"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- DB controls -->
+    <section class="card" style="margin-top:16px">
+      <h2>Database</h2>
+      <div class="body">
+        <div class="row">
+          <button id="export" class="btn-accent">⬇️ Export .sqlite</button>
+          <label class="pill" style="padding:8px 12px;cursor:pointer;">
+            ⬆️ Import .sqlite
+            <input id="import" type="file" accept=".sqlite,.db,.bin,application/octet-stream" style="display:none">
+          </label>
+          <button id="reset" class="btn-danger">🗑️ Reset DB</button>
+          <span class="muted" id="db-size" style="margin-left:auto"></span>
+        </div>
+        <div class="footer">
+          Tips: untuk hosting statis, cukup unggah file ini. WASM diambil dari CDN dan berjalan sepenuhnya di sisi klien.
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- sql.js (WASM) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.min.js" integrity="sha512-0g2dcJ3L7WvSY5wGHQ+Z3D0zOY2oZCzZn7qGQJw8mQ2J0k2SV8U2tUSfMr5kTrq0P8d4JM8zX1KjDkHxq6q6kQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script>
+    // --- Util: base64 <-> Uint8Array (chunk-safe)
+    function u8ToBase64(u8){
+      let CHUNK=0x8000, idx=0, str="";
+      while(idx < u8.length){
+        let sub = u8.subarray(idx, Math.min(idx+CHUNK, u8.length));
+        str += String.fromCharCode.apply(null, sub);
+        idx += CHUNK;
+      }
+      return btoa(str);
+    }
+    function base64ToU8(b64){
+      const bin = atob(b64);
+      const len = bin.length;
+      const u8 = new Uint8Array(len);
+      for(let i=0;i<len;i++) u8[i] = bin.charCodeAt(i);
+      return u8;
+    }
+
+    const STORAGE_KEY = "sqlite_demo_db_b64_v1";
+    let SQL, db, editingId = null;
+
+    (async function init(){
+      SQL = await initSqlJs({
+        // Pastikan file .wasm dimuat dari CDN yang sama
+        locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${file}`
+      });
+
+      // Load DB dari localStorage atau buat baru
+      const saved = localStorage.getItem(STORAGE_KEY);
+      db = saved ? new SQL.Database(base64ToU8(saved)) : new SQL.Database();
+
+      // Inisialisasi skema jika belum ada
+      ensureSchema();
+      renderContacts();
+      updateSizeLabel();
+      bindUI();
+      console.log("SQLite ready.");
+    })();
+
+    function ensureSchema(){
+      // Buat tabel contacts jika belum ada
+      db.run(`
+        CREATE TABLE IF NOT EXISTS contacts(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          email TEXT NOT NULL UNIQUE
+        );
+      `);
+      // Seed ringan jika kosong
+      const check = db.exec("SELECT COUNT(*) AS c FROM contacts");
+      const count = (check[0]?.values?.[0]?.[0]) ?? 0;
+      if(count === 0){
+        const stmt = db.prepare("INSERT INTO contacts(name,email) VALUES (?,?)");
+        [["Budi Santoso","budi@example.com"],["Sari Lestari","sari@example.com"]].forEach(([n,e])=>{
+          stmt.run([n,e]);
+        });
+        stmt.free();
+        saveDB();
+      }
+    }
+
+    function saveDB(){
+      const binaryArray = db.export();
+      localStorage.setItem(STORAGE_KEY, u8ToBase64(binaryArray));
+      updateSizeLabel();
+    }
+
+    function updateSizeLabel(){
+      const b64 = localStorage.getItem(STORAGE_KEY) || "";
+      // perkiraan ukuran (base64 ~ 4/3)
+      const bytes = Math.floor(b64.length * 3/4);
+      const kb = (bytes/1024).toFixed(1);
+      document.getElementById("db-size").textContent = bytes ? `Ukuran DB ≈ ${kb} KB` : "";
+    }
+
+    // ---- SQL Console
+    function runSQL(){
+      const out = document.getElementById("results");
+      const err = document.getElementById("sql-error");
+      out.innerHTML = "";
+      err.style.display = "none";
+      try{
+        const query = document.getElementById("sql-editor").value.trim();
+        if(!query) return;
+        // Jalankan; bisa multi-statement
+        const results = db.exec(query);
+        // Render semua resultset
+        if(results.length === 0){
+          out.innerHTML = `<div class="muted">✅ Perintah dieksekusi. (Tidak ada resultset)</div>`;
+        }else{
+          results.forEach((res,i)=>{
+            out.appendChild(renderTable(res.columns, res.values, `Hasil ${i+1}`));
+          });
+        }
+        // Jika query memodifikasi data, simpan & refresh CRUD
+        if(/^\s*(insert|update|delete|create|drop|alter|replace)\b/i.test(query)){
+          saveDB();
+          renderContacts();
+        }
+      }catch(e){
+        err.textContent = "Error: " + e.message;
+        err.style.display = "block";
+      }
+    }
+
+    function renderTable(columns, rows, caption=null){
+      const wrapper = document.createElement("div");
+      wrapper.style.marginBottom = "10px";
+      if(caption){
+        const h = document.createElement("div");
+        h.className = "muted";
+        h.textContent = caption;
+        wrapper.appendChild(h);
+      }
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const trh = document.createElement("tr");
+      columns.forEach(c=>{
+        const th = document.createElement("th");
+        th.textContent = c;
+        trh.appendChild(th);
+      });
+      thead.appendChild(trh);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      rows.forEach(r=>{
+        const tr = document.createElement("tr");
+        r.forEach(val=>{
+          const td = document.createElement("td");
+          td.textContent = val===null ? "NULL" : String(val);
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      wrapper.appendChild(table);
+      return wrapper;
+    }
+
+    // ---- CRUD Contacts
+    function renderContacts(){
+      const res = db.exec("SELECT id,name,email FROM contacts ORDER BY id DESC");
+      const mount = document.getElementById("crud-table");
+      if(res.length === 0 || res[0].values.length === 0){
+        mount.innerHTML = `<div class="muted">Belum ada data.</div>`;
+        return;
+      }
+      const columns = res[0].columns.concat(["actions"]);
+      const rows = res[0].values.map(v => v.concat([null]));
+      const wrapper = document.createElement("div");
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const trh = document.createElement("tr");
+      columns.forEach(c=>{
+        const th = document.createElement("th");
+        th.textContent = c;
+        trh.appendChild(th);
+      });
+      thead.appendChild(trh);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      rows.forEach(r=>{
+        const tr = document.createElement("tr");
+        // id, name, email
+        for(let i=0;i<3;i++){
+          const td = document.createElement("td");
+          td.textContent = r[i];
+          tr.appendChild(td);
+        }
+        // actions
+        const tdAct = document.createElement("td");
+        const editBtn = document.createElement("button");
+        editBtn.textContent = "Edit";
+        editBtn.onclick = ()=> startEdit(r[0], r[1], r[2]);
+        const delBtn = document.createElement("button");
+        delBtn.textContent = "Hapus";
+        delBtn.className = "btn-danger";
+        delBtn.style.marginLeft = "6px";
+        delBtn.onclick = ()=> removeContact(r[0]);
+        tdAct.appendChild(editBtn);
+        tdAct.appendChild(delBtn);
+        tr.appendChild(tdAct);
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      wrapper.appendChild(table);
+      mount.innerHTML = "";
+      mount.appendChild(wrapper);
+    }
+
+    function addContact(){
+      const name = document.getElementById("name").value.trim();
+      const email = document.getElementById("email").value.trim();
+      if(!name || !email) return alert("Nama & Email wajib diisi.");
+      try{
+        const stmt = db.prepare("INSERT INTO contacts(name,email) VALUES (?,?)");
+        stmt.run([name, email]);
+        stmt.free();
+        saveDB();
+        document.getElementById("name").value = "";
+        document.getElementById("email").value = "";
+        renderContacts();
+      }catch(e){
+        alert("Gagal menambah: " + e.message);
+      }
+    }
+
+    function startEdit(id, name, email){
+      editingId = id;
+      document.getElementById("name").value = name;
+      document.getElementById("email").value = email;
+      document.getElementById("update").disabled = false;
+      document.getElementById("add").disabled = true;
+    }
+
+    function cancelEdit(){
+      editingId = null;
+      document.getElementById("name").value = "";
+      document.getElementById("email").value = "";
+      document.getElementById("update").disabled = true;
+      document.getElementById("add").disabled = false;
+    }
+
+    function updateContact(){
+      if(editingId===null) return;
+      const name = document.getElementById("name").value.trim();
+      const email = document.getElementById("email").value.trim();
+      if(!name || !email) return alert("Nama & Email wajib diisi.");
+      try{
+        const stmt = db.prepare("UPDATE contacts SET name=?, email=? WHERE id=?");
+        stmt.run([name, email, editingId]);
+        stmt.free();
+        saveDB();
+        cancelEdit();
+        renderContacts();
+      }catch(e){
+        alert("Gagal update: " + e.message);
+      }
+    }
+
+    function removeContact(id){
+      if(!confirm("Hapus kontak ini?")) return;
+      const stmt = db.prepare("DELETE FROM contacts WHERE id=?");
+      stmt.run([id]);
+      stmt.free();
+      saveDB();
+      renderContacts();
+    }
+
+    // ---- Import / Export / Reset
+    function exportDB(){
+      const u8 = db.export();
+      const blob = new Blob([u8], {type:"application/octet-stream"});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "browser-sqlite.sqlite";
+      document.body.appendChild(a); a.click();
+      URL.revokeObjectURL(url); a.remove();
+    }
+
+    async function importDB(file){
+      if(!file) return;
+      const buf = await file.arrayBuffer();
+      db.close();
+      db = new SQL.Database(new Uint8Array(buf));
+      ensureSchema();
+      saveDB();
+      renderContacts();
+      alert("Import berhasil.");
+    }
+
+    function resetDB(){
+      if(!confirm("Reset database lokal? Semua data akan hilang.")) return;
+      localStorage.removeItem(STORAGE_KEY);
+      db.close();
+      db = new SQL.Database();
+      ensureSchema();
+      saveDB();
+      renderContacts();
+    }
+
+    // ---- Bindings
+    function bindUI(){
+      document.getElementById("run-sql").onclick = runSQL;
+      document.getElementById("format-sql").onclick = ()=>{ document.getElementById("sql-editor").value=""; document.getElementById("results").innerHTML=""; document.getElementById("sql-error").style.display="none"; };
+      document.getElementById("sample-queries").onclick = ()=>{
+        document.getElementById("sql-editor").value =
+`-- Buat tabel lain (opsional)
+CREATE TABLE IF NOT EXISTS todos(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  done INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO todos(title) VALUES ('Coba sql.js'), ('Pelajari WASM');
+
+SELECT * FROM todos ORDER BY id DESC;`;
+      };
+      document.getElementById("add").onclick = addContact;
+      document.getElementById("update").onclick = updateContact;
+      document.getElementById("cancel-edit").onclick = cancelEdit;
+      document.getElementById("export").onclick = exportDB;
+      document.getElementById("import").addEventListener("change", e=> importDB(e.target.files[0]));
+      document.getElementById("reset").onclick = resetDB;
+    }
+  </script>
+</body>
+</html>
